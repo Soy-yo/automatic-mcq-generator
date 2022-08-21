@@ -1,6 +1,7 @@
 from .generator import (
     AnswerGenerator,
     QuestionGenerator,
+    DistractorGenerator,
     MultipleChoiceQuestionGenerator
 )
 
@@ -8,5 +9,6 @@ from .generator import (
 __all__ = [
     'AnswerGenerator',
     'QuestionGenerator',
+    'DistractorGenerator',
     'MultipleChoiceQuestionGenerator'
 ]
