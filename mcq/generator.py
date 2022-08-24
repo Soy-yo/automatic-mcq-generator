@@ -3,6 +3,12 @@ from typing import List
 import torch
 from dataclasses import dataclass, field, asdict
 
+from .data import (
+    SQuADAnswerGenerationPreprocessor,
+    SQuADQuestionGenerationPreprocessor,
+    RACEDistractorGenerationPreprocessor
+)
+
 
 DEFAULT_ANSWER_TOKENIZER = 't5-small'
 DEFAULT_ANSWER_MODEL = 't5-small'
@@ -65,19 +71,27 @@ class AnswerGenerator:
             model=DEFAULT_ANSWER_MODEL,
             max_context_tokens=DEFAULT_MAX_CONTEXT_TOKENS,
             max_tokens_per_answer=DEFAULT_MAX_ANSWER_TOKENS,
-            max_total_answer_tokens=DEFAULT_MAX_TOTAL_ANSWER_TOKENS
+            max_total_answer_tokens=DEFAULT_MAX_TOTAL_ANSWER_TOKENS,
+            preprocessor=None
     ):
         self._tokenizer, self._model = get_models(tokenizer, model)
+
+        if preprocessor is None:
+            preprocessor = SQuADAnswerGenerationPreprocessor(
+                self._tokenizer,
+                with_target=False
+            )
 
         self.max_context_tokens = max_context_tokens
         self.max_tokens_per_answer = max_tokens_per_answer
         self.max_total_answer_tokens = max_total_answer_tokens
+        self._preprocessor = preprocessor
 
         self.contexts = None
         self.context_tokens = None
 
     def fit(self, documents):
-        self.contexts = [self._preprocess_input(d) for d in documents]
+        self.contexts = [self._preprocessor(context=d) for d in documents]
 
         self.context_tokens = [
             self._tokenizer(
@@ -148,11 +162,6 @@ class AnswerGenerator:
 
         return answers
 
-    # TODO might extract to some kind of utils
-    @staticmethod
-    def _preprocess_input(context):
-        return f'generate answers: {context}'
-
 
 class QuestionGenerator:
 
@@ -162,21 +171,29 @@ class QuestionGenerator:
             model=DEFAULT_QUESTION_MODEL,
             batch_size=DEFAULT_BATCH_SIZE,
             max_input_tokens=DEFAULT_MAX_CONTEXT_TOKENS,
-            max_question_tokens=DEFAULT_MAX_QUESTION_TOKENS
+            max_question_tokens=DEFAULT_MAX_QUESTION_TOKENS,
+            preprocessor=None
     ):
         self._tokenizer, self._model = get_models(tokenizer, model)
+
+        if preprocessor is None:
+            preprocessor = SQuADQuestionGenerationPreprocessor(
+                self._tokenizer,
+                with_target=False
+            )
 
         self.batch_size = batch_size
 
         self.max_input_tokens = max_input_tokens
         self.max_question_tokens = max_question_tokens
+        self._preprocessor = preprocessor
 
         self.inputs = None
         self.input_tokens = None
 
     def fit(self, documents, answers):
         self.inputs = [
-            self._preprocess_input(a, d)
+            self._preprocessor(context=d, answer=a)
             for d, a in zip(documents, answers)
         ]
 
@@ -206,10 +223,6 @@ class QuestionGenerator:
 
         return questions
 
-    @staticmethod
-    def _preprocess_input(answer, context):
-        return f'generate question: {answer} context: {context}'
-
 
 class DistractorGenerator:
 
@@ -219,20 +232,28 @@ class DistractorGenerator:
             model=DEFAULT_DISTRACTOR_MODEL,
             max_input_tokens=DEFAULT_MAX_CONTEXT_TOKENS,
             max_tokens_per_distractor=DEFAULT_MAX_DISTRACTOR_TOKENS,
-            max_total_distractor_tokens=DEFAULT_MAX_TOTAL_DISTRACTOR_TOKENS
+            max_total_distractor_tokens=DEFAULT_MAX_TOTAL_DISTRACTOR_TOKENS,
+            preprocessor=None
     ):
         self._tokenizer, self._model = get_models(tokenizer, model)
+
+        if preprocessor is None:
+            preprocessor = RACEDistractorGenerationPreprocessor(
+                self._tokenizer,
+                with_target=False
+            )
 
         self.max_input_tokens = max_input_tokens
         self.max_tokens_per_distractor = max_tokens_per_distractor
         self.max_total_distractor_tokens = max_total_distractor_tokens
+        self._preprocessor = preprocessor
 
         self.inputs = None
         self.input_tokens = None
 
     def fit(self, documents, answers, questions):
         self.inputs = [
-            self._preprocess_input(q, a, d)
+            self._preprocessor(question=q, answer=a, context=d)
             for d, a, q in zip(documents, answers, questions)
         ]
 
@@ -307,10 +328,6 @@ class DistractorGenerator:
             distractors.append(current_distactors)
 
         return distractors
-
-    @staticmethod
-    def _preprocess_input(question, answer, context):
-        return f'generate distractors: {question} answer: {answer} context: {context}'
 
 
 class MultipleChoiceQuestionGenerator:
