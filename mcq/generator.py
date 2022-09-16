@@ -250,12 +250,16 @@ class DistractorGenerator:
 
         self.inputs = None
         self.input_tokens = None
+        self.answers = None
 
     def fit(self, documents, answers, questions):
         self.inputs = [
             self._preprocessor(question=q, answer=a, context=d)
             for d, a, q in zip(documents, answers, questions)
         ]
+
+        # Remember answers to allow retries on generation
+        self.answers = answers
 
         self.input_tokens = [
             self._tokenizer(
@@ -270,7 +274,14 @@ class DistractorGenerator:
 
         return self
 
-    def generate(self, distractors_per_document=3, **kwargs):
+    def generate(
+            self,
+            distractors_per_document=3,
+            *,
+            max_retries=0,
+            avoid_repetition=False,
+            **kwargs
+    ):
         def distractors_range(n):
             if n >= 0:
                 return range(n)
@@ -287,45 +298,67 @@ class DistractorGenerator:
 
         distractors = []
 
-        # TODO repeat generation if there are some repetition
-
-        for inp in self.input_tokens:
+        for inp, real_answer in zip(self.input_tokens, self.answers):
             inp['decoder_input_ids'] = torch.tensor([[
                 self._tokenizer.pad_token_id
             ]])
 
             distractor_tokens = []
+            current_distactors = []
 
             k = 0
+            retry = True
+            n_retry = 0
 
-            for _ in distractors_range(distractors_per_document):
-                output = self._model.generate(
-                    **inp,
-                    forced_eos_token_id=self._tokenizer.eos_token_id,
-                    **kwargs
-                )
+            while retry:
+                for _ in distractors_range(distractors_per_document):
+                    output = self._model.generate(
+                        **inp,
+                        forced_eos_token_id=self._tokenizer.eos_token_id,
+                        **kwargs
+                    )
 
-                # Add previous generations to decoder input
-                inp['decoder_input_ids'] = output
+                    # Add previous generations to decoder input
+                    inp['decoder_input_ids'] = output
 
-                distractor_tokens.append(output[0, k:])
+                    distractor_tokens.append(output[0, k:])
 
-                # Stop if maximum size will be reached
-                k = len(output[0])
-                next_max = k + self.max_tokens_per_distractor
-                if next_max > self.max_total_distractor_tokens:
-                    break
+                    # Stop if maximum size will be reached
+                    k = len(output[0])
+                    next_max = k + self.max_tokens_per_distractor
+                    if next_max > self.max_total_distractor_tokens:
+                        break
 
-            # Extract all generated answers
-            if distractor_tokens:
-                current_distactors = self._tokenizer.batch_decode(
-                    distractor_tokens,
-                    skip_special_tokens=True
-                )
-            else:
-                current_distactors = []
+                # Extract all generated answers
+                if distractor_tokens:
+                    current_distactors.extend(self._tokenizer.batch_decode(
+                        distractor_tokens,
+                        skip_special_tokens=True
+                    ))
 
-            distractors.append(current_distactors)
+                if not avoid_repetition:
+                    # Doesn't make sense to retry
+                    retry = False
+                else:
+                    # Remove duplicates
+                    current_distactors = set(current_distactors)
+
+                    # Remove real answer if found
+                    if real_answer in current_distactors:
+                        current_distactors.remove(real_answer)
+
+                    current_distactors = list(current_distactors)
+
+                    n_retry += 1
+
+                    # Retry if we have a repeated option
+                    # (either answer or distractor)
+                    retry = (
+                            n_retry > max_retries and
+                            len(current_distactors) < distractors_per_document
+                    )
+
+            distractors.append(current_distactors[:distractors_per_document])
 
         return distractors
 
