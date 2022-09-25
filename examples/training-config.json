@@ -1,0 +1,21 @@
+{
+  "model_name": "t5-small",
+  "save_to": "models/mcqg",
+  "preprocess_config": {
+    "batch_size": 512,
+    "max_input_length": 512,
+    "use_validation": true,
+    "num_proc": 8
+  },
+  "training_args": {
+    "output_dir": "trains/checkpoints/mcqg",
+    "per_device_train_batch_size": 8,
+    "per_device_eval_batch_size": 8,
+    "optim": "adafactor",
+    "learning_rate": 3e-4,
+    "max_steps": 150000,
+    "save_steps": 15000,
+    "save_total_limit": 4,
+    "evaluation_strategy": "epoch"
+  }
+}
